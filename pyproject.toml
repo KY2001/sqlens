@@ -1,0 +1,10 @@
+[project]
+name = "sqlens"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "sqlfluff>=4.2.2",
+    "sqruff>=0.39.0",
+]
