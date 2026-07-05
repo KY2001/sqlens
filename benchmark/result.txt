@@ -1,0 +1,60 @@
+(sqlens) ky2001@Keindev ~/O/L/sqlens (feature-init)> make benchmark
+uv run benchmark/benchmark.py
+Bytecode compiled 1160 files in 483ms
+
+suite              dialect   files  KiB    
+-----------------  --------  -----  -------
+sakila-mysql       mysql     4      8921.1 
+sqlfluff-mysql     mysql     203    46.4   
+sqruff-mysql       mysql     116    12.4   
+postgres-postgres  postgres  247    4909.3 
+sakila-postgres    postgres  5      10427.5
+sqlfluff-postgres  postgres  164    146.4  
+sqruff-postgres    postgres  38     46.9   
+sakila-sqlite      sqlite    4      8351.6 
+sqlfluff-sqlite    sqlite    34     16.4   
+sqruff-sqlite      sqlite    12     5.8    
+
+sakila-mysql      sqlfluff run 1/1: 0.760s exit:0
+sakila-mysql      sqruff   run 1/1: 300.001s timeout
+sqlfluff-mysql    sqlfluff run 1/1: 6.680s exit:0
+sqlfluff-mysql    sqruff   run 1/1: 0.200s exit:1
+sqruff-mysql      sqlfluff run 1/1: 2.800s exit:0
+sqruff-mysql      sqruff   run 1/1: 0.170s exit:1
+postgres-postgres sqlfluff run 1/1: 99.110s exit:0
+postgres-postgres sqruff   run 1/1: 2.810s exit:1
+sakila-postgres   sqlfluff run 1/1: 0.680s exit:0
+sakila-postgres   sqruff   run 1/1: 300.001s timeout
+sqlfluff-postgres sqlfluff run 1/1: 16.310s exit:0
+sqlfluff-postgres sqruff   run 1/1: 0.250s exit:1
+sqruff-postgres   sqlfluff run 1/1: 4.360s exit:0
+sqruff-postgres   sqruff   run 1/1: 0.210s exit:1
+sakila-sqlite     sqlfluff run 1/1: 1.520s exit:0
+sakila-sqlite     sqruff   run 1/1: 300.002s timeout
+sqlfluff-sqlite   sqlfluff run 1/1: 4.550s exit:0
+sqlfluff-sqlite   sqruff   run 1/1: 0.280s exit:1
+sqruff-sqlite     sqlfluff run 1/1: 2.210s exit:0
+sqruff-sqlite     sqruff   run 1/1: 0.300s exit:1
+
+suite              dialect   tool      files  median    mean      min       max       peak MiB  files/s  vs sqlfluff  status 
+-----------------  --------  --------  -----  --------  --------  --------  --------  --------  -------  -----------  -------
+sakila-mysql       mysql     sqlfluff  4      0.760s    0.760s    0.760s    0.760s    55.9      5.3      1.00x        exit:0 
+sakila-mysql       mysql     sqruff    4      300.001s  300.001s  300.001s  300.001s  0.0       -        -            timeout
+sqlfluff-mysql     mysql     sqlfluff  203    6.680s    6.680s    6.680s    6.680s    107.9     30.4     1.00x        exit:0 
+sqlfluff-mysql     mysql     sqruff    203    0.200s    0.200s    0.200s    0.200s    73.0      1015.0   33.40x       exit:1 
+sqruff-mysql       mysql     sqlfluff  116    2.800s    2.800s    2.800s    2.800s    54.7      41.4     1.00x        exit:0 
+sqruff-mysql       mysql     sqruff    116    0.170s    0.170s    0.170s    0.170s    42.8      682.4    16.47x       exit:1 
+postgres-postgres  postgres  sqlfluff  247    99.110s   99.110s   99.110s   99.110s   146.2     2.5      1.00x        exit:0 
+postgres-postgres  postgres  sqruff    247    2.810s    2.810s    2.810s    2.810s    2212.0    87.9     35.27x       exit:1 
+sakila-postgres    postgres  sqlfluff  5      0.680s    0.680s    0.680s    0.680s    56.4      7.4      1.00x        exit:0 
+sakila-postgres    postgres  sqruff    5      300.001s  300.001s  300.001s  300.001s  0.0       -        -            timeout
+sqlfluff-postgres  postgres  sqlfluff  164    16.310s   16.310s   16.310s   16.310s   117.5     10.1     1.00x        exit:0 
+sqlfluff-postgres  postgres  sqruff    164    0.250s    0.250s    0.250s    0.250s    162.2     656.0    65.24x       exit:1 
+sqruff-postgres    postgres  sqlfluff  38     4.360s    4.360s    4.360s    4.360s    66.6      8.7      1.00x        exit:0 
+sqruff-postgres    postgres  sqruff    38     0.210s    0.210s    0.210s    0.210s    88.0      181.0    20.76x       exit:1 
+sakila-sqlite      sqlite    sqlfluff  4      1.520s    1.520s    1.520s    1.520s    69.3      2.6      1.00x        exit:0 
+sakila-sqlite      sqlite    sqruff    4      300.002s  300.002s  300.002s  300.002s  0.0       -        -            timeout
+sqlfluff-sqlite    sqlite    sqlfluff  34     4.550s    4.550s    4.550s    4.550s    58.4      7.5      1.00x        exit:0 
+sqlfluff-sqlite    sqlite    sqruff    34     0.280s    0.280s    0.280s    0.280s    46.4      121.4    16.25x       exit:1 
+sqruff-sqlite      sqlite    sqlfluff  12     2.210s    2.210s    2.210s    2.210s    52.1      5.4      1.00x        exit:0 
+sqruff-sqlite      sqlite    sqruff    12     0.300s    0.300s    0.300s    0.300s    43.6      40.0     7.37x        exit:1 
