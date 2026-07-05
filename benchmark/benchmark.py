@@ -16,15 +16,8 @@ TESTSUIT = ROOT / "benchmark" / "testsuit"
 TOOLS = ("sqlfluff", "sqruff")
 RUNS = 1
 TIMEOUT_SEC = 300
-LIMIT_FILES: int | None = None
 ACCEPTED_EXIT_CODES = {0, 1}
 SIGNAL_EXIT_OFFSET = 128
-# Map each testsuit/<dir> to the dialect passed to the linters.
-DIALECT_DIRS = {
-    "postgresql": "postgres",
-    "mysql": "mysql",
-    "sqlite": "sqlite",
-}
 
 
 @dataclass(frozen=True)
@@ -60,7 +53,7 @@ class BenchmarkResult:
 
 
 def main() -> int:
-    suites = discover_suites(TESTSUIT, LIMIT_FILES)
+    suites = discover_suites(TESTSUIT)
     print_suites(suites)
     results = run_benchmark(suites)
     print_results(results)
@@ -68,25 +61,23 @@ def main() -> int:
     return 0
 
 
-def discover_suites(testsuit_root: Path, limit: int | None) -> list[Suite]:
+def discover_suites(testsuit_root: Path) -> list[Suite]:
     """Build a suite from each testsuit/<dialect>/<repo> directory of SQL."""
     suites = []
     for dialect_dir in sorted(testsuit_root.iterdir()):
-        dialect = DIALECT_DIRS.get(dialect_dir.name)
+        dialect = dialect_dir.name
         if dialect is None or not dialect_dir.is_dir():
             continue
         for repo_dir in sorted(dialect_dir.iterdir()):
             if not repo_dir.is_dir():
                 continue
             files = sorted(repo_dir.glob("**/*.sql"))
-            if limit is not None:
-                files = files[:limit]
             if not files:
                 continue
             suites.append(
                 Suite(
-                    name=f"{repo_dir.name}-{dialect}",
-                    dialect=dialect,
+                    name=f"{repo_dir.name}-{dialect_dir.name}",
+                    dialect=dialect_dir.name,
                     path=repo_dir,
                     files=len(files),
                     bytes=sum(file.stat().st_size for file in files),
