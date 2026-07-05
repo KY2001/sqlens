@@ -1,3 +1,0 @@
---source include/have_hypergraph.inc
---source include/subquery_allany_test.inc
---source include/disable_hypergraph.inc

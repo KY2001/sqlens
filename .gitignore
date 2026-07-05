@@ -3,4 +3,3 @@
 .ruff_cache
 .claude
 __pycache__
-benchmark/testsuit/_repos

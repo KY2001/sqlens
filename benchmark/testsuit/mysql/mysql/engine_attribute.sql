@@ -1,3 +1,0 @@
---echo # main.engine_attribute BEGIN
---source include/engine_attribute.inc
---echo # main.engine_attribute END

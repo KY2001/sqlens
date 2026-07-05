@@ -1,2 +1,0 @@
---source include/not_hypergraph.inc
---source include/subquery_scalar_to_derived.inc

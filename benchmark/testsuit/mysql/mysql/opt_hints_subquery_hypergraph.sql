@@ -1,3 +1,0 @@
---source include/have_hypergraph.inc
---source include/opt_hints_subquery.inc
---source include/disable_hypergraph.inc
