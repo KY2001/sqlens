@@ -1,1 +1,1 @@
-Keep any changes simple and sophisticated.
+Keep changes simple and sophisticated.

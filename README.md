@@ -68,4 +68,4 @@ warning[non-portable-syntax]: syntax is not supported by the target dialect
 
 ## License
 
-MIT
+MIT license ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
