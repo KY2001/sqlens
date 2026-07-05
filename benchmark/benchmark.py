@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -17,8 +18,11 @@ import jc
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTSUIT = ROOT / "benchmark" / "testsuit"
+WORKSPACE = ROOT / "benchmark" / "workspace"
+DISABLED_SUITES = frozenset({"sakila"})
 TOOLS = ("sqlfluff", "sqruff")
-TIMEOUT_SEC = 150
+ACTIONS = ("format", "lint")
+TIMEOUT_SEC = 300
 ACCEPTED_EXIT_CODES = {0, 1}
 SIGNAL_EXIT_OFFSET = 128
 
@@ -45,6 +49,7 @@ class BenchmarkResult:
     suite: str
     dialect: str
     tool: str
+    action: str
     files: int
     bytes: int
     time: float
@@ -71,7 +76,7 @@ def discover_suites(testsuit_root: Path) -> list[Suite]:
         if dialect is None or not dialect_dir.is_dir():
             continue
         for repo_dir in sorted(dialect_dir.iterdir()):
-            if not repo_dir.is_dir():
+            if not repo_dir.is_dir() or repo_dir.name in DISABLED_SUITES:
                 continue
             files = sorted(repo_dir.glob("**/*.sql"))
             if not files:
@@ -91,63 +96,66 @@ def discover_suites(testsuit_root: Path) -> list[Suite]:
     return suites
 
 
-def command(tool: str, suite: Suite) -> list[str]:
+def command(action: str, tool: str, dialect: str, path: Path) -> list[str]:
+    subcommand = "fix" if action == "format" else "lint"
     if tool == "sqlfluff":
-        return [
-            "uv",
-            "run",
-            "sqlfluff",
-            "lint",
-            "--dialect",
-            suite.dialect,
-            "--format",
-            "none",
-            "--disable-progress-bar",
-            "--ignore-local-config",
-            str(suite.path),
-        ]
+        base = ["uv", "run", "sqlfluff", subcommand, "--dialect", dialect]
+        if action == "lint":
+            base += ["--format", "none"]
+        base += ["--disable-progress-bar", "--ignore-local-config", str(path)]
+        return base
 
     return [
         "uv",
         "run",
         "sqruff",
-        "lint",
+        subcommand,
         "--dialect",
-        suite.dialect,
+        dialect,
         "--format",
         "none",
-        str(suite.path),
+        str(path),
     ]
 
 
 def run_benchmark(
     suites: list[Suite],
 ) -> list[BenchmarkResult]:
-    rows: list[BenchmarkResult] = []
+    if WORKSPACE.exists():
+        shutil.rmtree(WORKSPACE)
+
     for suite in suites:
         for tool in TOOLS:
-            cmd = command(tool, suite)
+            shutil.copytree(suite.path, WORKSPACE / tool / suite.name)
 
-            measurement = timed(cmd, TIMEOUT_SEC)
-            print(
-                f"{suite.name:<17} {tool:<8}: {measurement.elapsed:.3f}s "
-                f"{measurement.status}",
-            )
+    rows: list[BenchmarkResult] = []
+    for action in ACTIONS:
+        for suite in suites:
+            for tool in TOOLS:
+                workdir = WORKSPACE / tool / suite.name
+                cmd = command(action, tool, suite.dialect, workdir)
 
-            rows.append(
-                BenchmarkResult(
-                    suite=suite.name,
-                    dialect=suite.dialect,
-                    tool=tool,
-                    files=suite.files,
-                    bytes=suite.bytes,
-                    time=measurement.elapsed,
-                    max_rss_kib=measurement.max_rss_kib,
-                    status=measurement.status,
-                    failed=measurement.failed,
-                    command=tuple(cmd),
-                ),
-            )
+                measurement = timed(cmd, TIMEOUT_SEC)
+                print(
+                    f"{suite.name:<17} {tool:<8} {action:<6}: "
+                    f"{measurement.elapsed:.3f}s {measurement.status}",
+                )
+
+                rows.append(
+                    BenchmarkResult(
+                        suite=suite.name,
+                        dialect=suite.dialect,
+                        tool=tool,
+                        action=action,
+                        files=suite.files,
+                        bytes=suite.bytes,
+                        time=measurement.elapsed,
+                        max_rss_kib=measurement.max_rss_kib,
+                        status=measurement.status,
+                        failed=measurement.failed,
+                        command=tuple(cmd),
+                    ),
+                )
     return rows
 
 
@@ -226,17 +234,19 @@ def print_suites(suites: list[Suite]) -> None:
 
 def print_results(rows: list[BenchmarkResult]) -> None:
     baselines = {
-        row.suite: row.time for row in rows if row.tool == "sqlfluff" and not row.failed
+        (row.suite, row.action): row.time
+        for row in rows
+        if row.tool == "sqlfluff" and not row.failed
     }
     mem_baselines = {
-        row.suite: row.max_rss_kib
+        (row.suite, row.action): row.max_rss_kib
         for row in rows
         if row.tool == "sqlfluff" and not row.failed
     }
     display = []
     for row in rows:
-        baseline = baselines.get(row.suite)
-        mem_baseline = mem_baselines.get(row.suite)
+        baseline = baselines.get((row.suite, row.action))
+        mem_baseline = mem_baselines.get((row.suite, row.action))
         if row.failed:
             speedup = "-"
             mem_ratio = "-"
@@ -251,11 +261,12 @@ def print_results(rows: list[BenchmarkResult]) -> None:
             [
                 row.suite,
                 row.tool,
+                row.action,
                 str(row.files),
-                f"{row.time:.3f}s",
-                speedup,
                 f"{row.max_rss_kib / 1024:.1f} MiB",
                 mem_ratio,
+                f"{row.time:.3f}s",
+                speedup,
                 row.status,
             ],
         )
@@ -265,11 +276,12 @@ def print_results(rows: list[BenchmarkResult]) -> None:
         [
             "suite",
             "tool",
+            "action",
             "files",
-            "time",
-            "time vs sqlfluff",
             "max Rss",
             "memory vs sqlfluff",
+            "time",
+            "time vs sqlfluff",
             "status",
         ],
         display,
