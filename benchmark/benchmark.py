@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import statistics
 import subprocess
@@ -183,10 +184,11 @@ def timed(cmd: list[str], timeout: float) -> Measurement:
                 cwd=ROOT,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
             code = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            process.kill()
+            os.killpg(process.pid, signal.SIGKILL)
             process.wait()
             return Measurement(
                 elapsed=time.perf_counter() - started,
