@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import shutil
 import signal
 import statistics
 import subprocess
@@ -13,37 +12,25 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CACHE = ROOT / "benchmark" / ".cache"
+TESTSUIT = ROOT / "benchmark" / "testsuit"
 TOOLS = ("sqlfluff", "sqruff")
-DIALECTS = ("postgres", "mysql", "sqlite")
 RUNS = 1
-WARMUPS = 0
-TIMEOUT = 300.0
+TIMEOUT_SEC = 300
 LIMIT_FILES: int | None = None
-REFRESH_CACHE = False
+ACCEPTED_EXIT_CODES = {0, 1}
 SIGNAL_EXIT_OFFSET = 128
-
-
-@dataclass(frozen=True)
-class Repo:
-    name: str
-    url: str
-    ref: str
-    sparse_paths: tuple[str, ...]
+# Map each testsuit/<dir> to the dialect passed to the linters.
+DIALECT_DIRS = {
+    "postgresql": "postgres",
+    "mysql": "mysql",
+    "sqlite": "sqlite",
+}
 
 
 @dataclass(frozen=True)
 class Suite:
     name: str
-    repo: str
-    path: str
-    pattern: str
     dialect: str
-
-
-@dataclass(frozen=True)
-class StagedSuite:
-    suite: Suite
     path: Path
     files: int
     bytes: int
@@ -72,103 +59,8 @@ class BenchmarkResult:
     command: tuple[str, ...]
 
 
-REPOS = {
-    "sqlfluff": Repo(
-        name="sqlfluff",
-        url="https://github.com/sqlfluff/sqlfluff.git",
-        ref="main",
-        sparse_paths=tuple(f"test/fixtures/dialects/{dialect}" for dialect in DIALECTS),
-    ),
-    "sqruff": Repo(
-        name="sqruff",
-        url="https://github.com/quarylabs/sqruff.git",
-        ref="main",
-        sparse_paths=tuple(
-            f"crates/lib-dialects/test/fixtures/dialects/{dialect}"
-            for dialect in DIALECTS
-        ),
-    ),
-    "postgres": Repo(
-        name="postgres",
-        url="https://github.com/postgres/postgres.git",
-        ref="master",
-        sparse_paths=("src/test/regress/sql",),
-    ),
-    "mysql": Repo(
-        name="mysql",
-        url="https://github.com/mysql/mysql-server.git",
-        ref="trunk",
-        sparse_paths=("mysql-test/t",),
-    ),
-    "sqlite": Repo(
-        name="sqlite",
-        url="https://github.com/sqlite/sqlite.git",
-        ref="master",
-        sparse_paths=("test",),
-    ),
-    "sakila": Repo(
-        name="sakila",
-        url="https://github.com/jOOQ/sakila.git",
-        ref="main",
-        sparse_paths=("mysql-sakila-db", "postgres-sakila-db", "sqlite-sakila-db"),
-    ),
-}
-
-SUITES = (
-    Suite(
-        "sqlfluff-postgres",
-        "sqlfluff",
-        "test/fixtures/dialects/postgres",
-        "*.sql",
-        "postgres",
-    ),
-    Suite(
-        "sqlfluff-mysql",
-        "sqlfluff",
-        "test/fixtures/dialects/mysql",
-        "*.sql",
-        "mysql",
-    ),
-    Suite(
-        "sqlfluff-sqlite",
-        "sqlfluff",
-        "test/fixtures/dialects/sqlite",
-        "*.sql",
-        "sqlite",
-    ),
-    Suite(
-        "sqruff-postgres",
-        "sqruff",
-        "crates/lib-dialects/test/fixtures/dialects/postgres",
-        "**/*.sql",
-        "postgres",
-    ),
-    Suite(
-        "sqruff-mysql",
-        "sqruff",
-        "crates/lib-dialects/test/fixtures/dialects/mysql",
-        "**/*.sql",
-        "mysql",
-    ),
-    Suite(
-        "sqruff-sqlite",
-        "sqruff",
-        "crates/lib-dialects/test/fixtures/dialects/sqlite",
-        "**/*.sql",
-        "sqlite",
-    ),
-    Suite("postgres-regress", "postgres", "src/test/regress/sql", "*.sql", "postgres"),
-    Suite("mysql-tests", "mysql", "mysql-test/t", "*.test", "mysql"),
-    Suite("sqlite-tests", "sqlite", "test", "*.test", "sqlite"),
-    Suite("sakila-mysql", "sakila", "mysql-sakila-db", "*.sql", "mysql"),
-    Suite("sakila-postgres", "sakila", "postgres-sakila-db", "*.sql", "postgres"),
-    Suite("sakila-sqlite", "sakila", "sqlite-sakila-db", "*.sql", "sqlite"),
-)
-
-
 def main() -> int:
-    fetch_missing_repos(CACHE, refresh=REFRESH_CACHE)
-    suites = stage_suites(CACHE, LIMIT_FILES)
+    suites = discover_suites(TESTSUIT, LIMIT_FILES)
     print_suites(suites)
     results = run_benchmark(suites)
     print_results(results)
@@ -176,84 +68,37 @@ def main() -> int:
     return 0
 
 
-def fetch_missing_repos(cache_dir: Path, *, refresh: bool) -> None:
-    repos = {suite.repo for suite in SUITES}
-    for name in sorted(repos):
-        repo = REPOS[name]
-        target = cache_dir / "repos" / repo.name
-
-        if refresh and target.exists():
-            shutil.rmtree(target)
-        if repo_ready(target, repo):
+def discover_suites(testsuit_root: Path, limit: int | None) -> list[Suite]:
+    """Build a suite from each testsuit/<dialect>/<repo> directory of SQL."""
+    suites = []
+    for dialect_dir in sorted(testsuit_root.iterdir()):
+        dialect = DIALECT_DIRS.get(dialect_dir.name)
+        if dialect is None or not dialect_dir.is_dir():
             continue
+        for repo_dir in sorted(dialect_dir.iterdir()):
+            if not repo_dir.is_dir():
+                continue
+            files = sorted(repo_dir.glob("**/*.sql"))
+            if limit is not None:
+                files = files[:limit]
+            if not files:
+                continue
+            suites.append(
+                Suite(
+                    name=f"{repo_dir.name}-{dialect}",
+                    dialect=dialect,
+                    path=repo_dir,
+                    files=len(files),
+                    bytes=sum(file.stat().st_size for file in files),
+                ),
+            )
 
-        if target.exists():
-            shutil.rmtree(target)
-
-        print(f"fetch {repo.name} ({repo.ref})")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        run(["git", "init", "--quiet", str(target)])
-        run(["git", "-C", str(target), "remote", "add", "origin", repo.url])
-        run(["git", "-C", str(target), "sparse-checkout", "init", "--cone"])
-        run(["git", "-C", str(target), "sparse-checkout", "set", *repo.sparse_paths])
-        run(
-            [
-                "git",
-                "-C",
-                str(target),
-                "fetch",
-                "--quiet",
-                "--depth",
-                "1",
-                "origin",
-                repo.ref,
-            ],
-        )
-        run(["git", "-C", str(target), "checkout", "--quiet", "--detach", "FETCH_HEAD"])
+    if not suites:
+        raise SystemExit(f"no suites found under {testsuit_root}")
+    return suites
 
 
-def repo_ready(path: Path, repo: Repo) -> bool:
-    return (path / ".git").exists() and all(
-        (path / item).exists() for item in repo.sparse_paths
-    )
-
-
-def stage_suites(cache_dir: Path, limit: int | None) -> list[StagedSuite]:
-    stage_root = cache_dir / "stage"
-    if stage_root.exists():
-        shutil.rmtree(stage_root)
-    stage_root.mkdir(parents=True)
-
-    staged = []
-    for suite in SUITES:
-        repo_root = cache_dir / "repos" / suite.repo
-        source_root = repo_root / suite.path
-        files = sorted(source_root.glob(suite.pattern))
-        if limit is not None:
-            files = files[:limit]
-        if not files:
-            message = f"no files matched {source_root / suite.pattern}"
-            raise SystemExit(message)
-
-        target_root = stage_root / suite.name
-        target_root.mkdir()
-        for source in files:
-            target = target_root / source.relative_to(source_root).with_suffix(".sql")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-
-        staged.append(
-            StagedSuite(
-                suite=suite,
-                path=target_root,
-                files=len(files),
-                bytes=sum(file.stat().st_size for file in files),
-            ),
-        )
-    return staged
-
-
-def command(tool: str, suite: StagedSuite) -> list[str]:
+def command(tool: str, suite: Suite) -> list[str]:
     if tool == "sqlfluff":
         return [
             "uv",
@@ -261,7 +106,7 @@ def command(tool: str, suite: StagedSuite) -> list[str]:
             "sqlfluff",
             "lint",
             "--dialect",
-            suite.suite.dialect,
+            suite.dialect,
             "--templater",
             "raw",
             "--format",
@@ -280,7 +125,7 @@ def command(tool: str, suite: StagedSuite) -> list[str]:
         "sqruff",
         "lint",
         "--dialect",
-        suite.suite.dialect,
+        suite.dialect,
         "--format",
         "none",
         str(suite.path),
@@ -288,38 +133,31 @@ def command(tool: str, suite: StagedSuite) -> list[str]:
 
 
 def run_benchmark(
-    suites: list[StagedSuite],
+    suites: list[Suite],
 ) -> list[BenchmarkResult]:
     rows: list[BenchmarkResult] = []
     for suite in suites:
         for tool in TOOLS:
             cmd = command(tool, suite)
-            for index in range(WARMUPS):
-                measurement = timed(cmd, TIMEOUT)
-                print(
-                    f"{suite.suite.name:<17} {tool:<8} warmup "
-                    f"{index + 1}/{WARMUPS}: {measurement.elapsed:.3f}s "
-                    f"{measurement.status}",
-                )
 
             timings: list[float] = []
             statuses: list[str] = []
             failed = False
             for index in range(RUNS):
-                measurement = timed(cmd, TIMEOUT)
+                measurement = timed(cmd, TIMEOUT_SEC)
                 timings.append(measurement.elapsed)
                 statuses.append(measurement.status)
                 failed = failed or measurement.failed
                 print(
-                    f"{suite.suite.name:<17} {tool:<8} run "
+                    f"{suite.name:<17} {tool:<8} run "
                     f"{index + 1}/{RUNS}: {measurement.elapsed:.3f}s "
                     f"{measurement.status}",
                 )
 
             rows.append(
                 BenchmarkResult(
-                    suite=suite.suite.name,
-                    dialect=suite.suite.dialect,
+                    suite=suite.name,
+                    dialect=suite.dialect,
                     tool=tool,
                     files=suite.files,
                     bytes=suite.bytes,
@@ -360,7 +198,11 @@ def timed(cmd: list[str], timeout: float) -> Measurement:
             failed=True,
         )
 
-    return Measurement(time.perf_counter() - started, status_for(code), code != 0)
+    return Measurement(
+        elapsed=time.perf_counter() - started,
+        status=status_for(code),
+        failed=code not in ACCEPTED_EXIT_CODES,
+    )
 
 
 def status_for(code: int) -> str:
@@ -379,11 +221,11 @@ def signal_status(number: int) -> str:
     return f"signal:{name}"
 
 
-def print_suites(suites: list[StagedSuite]) -> None:
+def print_suites(suites: list[Suite]) -> None:
     rows = [
         [
-            suite.suite.name,
-            suite.suite.dialect,
+            suite.name,
+            suite.dialect,
             str(suite.files),
             f"{suite.bytes / 1024:.1f}",
         ]
@@ -403,12 +245,14 @@ def print_results(rows: list[BenchmarkResult]) -> None:
     display = []
     for row in rows:
         baseline = baselines.get(row.suite)
-        speedup = (
-            f"{baseline / row.median:.2f}x"
-            if baseline is not None and row.median and not row.failed
-            else ""
-        )
-        throughput = f"{row.files / row.median:.1f}" if not row.failed else ""
+        if row.failed:
+            throughput = "-"
+            speedup = "-"
+        else:
+            throughput = f"{row.files / row.median:.1f}"
+            speedup = (
+                f"{baseline / row.median:.2f}x" if baseline and row.median else "-"
+            )
         display.append(
             [
                 row.suite,
@@ -443,11 +287,6 @@ def print_results(rows: list[BenchmarkResult]) -> None:
         display,
     )
 
-    failed = [row for row in rows if row.failed]
-    if failed:
-        print()
-        print("failed rows are timed but excluded from throughput and speedup")
-
 
 def table(headers: list[str], rows: list[list[str]]) -> None:
     widths = [len(header) for header in headers]
@@ -461,20 +300,6 @@ def table(headers: list[str], rows: list[list[str]]) -> None:
     print("  ".join("-" * width for width in widths))
     for row in rows:
         print("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
-
-
-def run(cmd: list[str]) -> None:
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        output = (result.stderr or result.stdout).strip()
-        command_text = " ".join(cmd)
-        message = f"command failed: {command_text}\n{output}"
-        raise SystemExit(message)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 .venv
 .uv-cache
 .ruff_cache
+.claude
 __pycache__
-benchmark/.cache
+benchmark/testsuit/_repos
