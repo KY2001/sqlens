@@ -1,7 +1,6 @@
 [project]
 name = "sqlens"
 version = "0.1.0"
-readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "sqlfluff>=4.2.2",
@@ -12,3 +11,24 @@ dependencies = [
 
 [tool.uv]
 compile-bytecode = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "D101",
+    "D103",
+    "D203",
+    "D213",
+    "S603",
+    "T201",
+]
+
+[tool.ruff.format]
+# Respecting the official example of ruff: https://docs.astral.sh/ruff/configuration/
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = false
+docstring-code-line-length = "dynamic"

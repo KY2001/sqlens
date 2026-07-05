@@ -12,7 +12,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "benchmark" / ".cache"
 TOOLS = ("sqlfluff", "sqruff")
@@ -22,6 +21,7 @@ WARMUPS = 0
 TIMEOUT = 300.0
 LIMIT_FILES: int | None = None
 REFRESH_CACHE = False
+SIGNAL_EXIT_OFFSET = 128
 
 
 @dataclass(frozen=True)
@@ -167,7 +167,7 @@ SUITES = (
 
 
 def main() -> int:
-    fetch_missing_repos(CACHE, REFRESH_CACHE)
+    fetch_missing_repos(CACHE, refresh=REFRESH_CACHE)
     suites = stage_suites(CACHE, LIMIT_FILES)
     print_suites(suites)
     results = run_benchmark(suites)
@@ -176,7 +176,7 @@ def main() -> int:
     return 0
 
 
-def fetch_missing_repos(cache_dir: Path, refresh: bool) -> None:
+def fetch_missing_repos(cache_dir: Path, *, refresh: bool) -> None:
     repos = {suite.repo for suite in SUITES}
     for name in sorted(repos):
         repo = REPOS[name]
@@ -207,7 +207,7 @@ def fetch_missing_repos(cache_dir: Path, refresh: bool) -> None:
                 "1",
                 "origin",
                 repo.ref,
-            ]
+            ],
         )
         run(["git", "-C", str(target), "checkout", "--quiet", "--detach", "FETCH_HEAD"])
 
@@ -232,7 +232,8 @@ def stage_suites(cache_dir: Path, limit: int | None) -> list[StagedSuite]:
         if limit is not None:
             files = files[:limit]
         if not files:
-            raise SystemExit(f"no files matched {source_root / suite.pattern}")
+            message = f"no files matched {source_root / suite.pattern}"
+            raise SystemExit(message)
 
         target_root = stage_root / suite.name
         target_root.mkdir()
@@ -247,7 +248,7 @@ def stage_suites(cache_dir: Path, limit: int | None) -> list[StagedSuite]:
                 path=target_root,
                 files=len(files),
                 bytes=sum(file.stat().st_size for file in files),
-            )
+            ),
         )
     return staged
 
@@ -296,7 +297,9 @@ def run_benchmark(
             for index in range(WARMUPS):
                 measurement = timed(cmd, TIMEOUT)
                 print(
-                    f"{suite.suite.name:<17} {tool:<8} warmup {index + 1}/{WARMUPS}: {measurement.elapsed:.3f}s {measurement.status}"
+                    f"{suite.suite.name:<17} {tool:<8} warmup "
+                    f"{index + 1}/{WARMUPS}: {measurement.elapsed:.3f}s "
+                    f"{measurement.status}",
                 )
 
             timings: list[float] = []
@@ -308,7 +311,9 @@ def run_benchmark(
                 statuses.append(measurement.status)
                 failed = failed or measurement.failed
                 print(
-                    f"{suite.suite.name:<17} {tool:<8} run {index + 1}/{RUNS}: {measurement.elapsed:.3f}s {measurement.status}"
+                    f"{suite.suite.name:<17} {tool:<8} run "
+                    f"{index + 1}/{RUNS}: {measurement.elapsed:.3f}s "
+                    f"{measurement.status}",
                 )
 
             rows.append(
@@ -325,7 +330,7 @@ def run_benchmark(
                     status=",".join(sorted(set(statuses))),
                     failed=failed,
                     command=tuple(cmd),
-                )
+                ),
             )
     return rows
 
@@ -343,10 +348,16 @@ def timed(cmd: list[str], timeout: float) -> Measurement:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
-        return Measurement(time.perf_counter() - started, "timeout", True)
+        return Measurement(
+            elapsed=time.perf_counter() - started,
+            status="timeout",
+            failed=True,
+        )
     except OSError as error:
         return Measurement(
-            time.perf_counter() - started, f"error:{error.strerror}", True
+            elapsed=time.perf_counter() - started,
+            status=f"error:{error.strerror}",
+            failed=True,
         )
 
     return Measurement(time.perf_counter() - started, status_for(code), code != 0)
@@ -355,8 +366,8 @@ def timed(cmd: list[str], timeout: float) -> Measurement:
 def status_for(code: int) -> str:
     if code < 0:
         return signal_status(-code)
-    if code > 128:
-        return signal_status(code - 128)
+    if code > SIGNAL_EXIT_OFFSET:
+        return signal_status(code - SIGNAL_EXIT_OFFSET)
     return f"exit:{code}"
 
 
@@ -411,7 +422,7 @@ def print_results(rows: list[BenchmarkResult]) -> None:
                 throughput,
                 speedup,
                 row.status,
-            ]
+            ],
         )
 
     print()
@@ -445,7 +456,7 @@ def table(headers: list[str], rows: list[list[str]]) -> None:
             widths[index] = max(widths[index], len(value))
 
     print(
-        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)),
     )
     print("  ".join("-" * width for width in widths))
     for row in rows:
@@ -454,11 +465,16 @@ def table(headers: list[str], rows: list[list[str]]) -> None:
 
 def run(cmd: list[str]) -> None:
     result = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if result.returncode != 0:
         output = (result.stderr or result.stdout).strip()
-        raise SystemExit(f"command failed: {' '.join(cmd)}\n{output}")
+        command_text = " ".join(cmd)
+        message = f"command failed: {command_text}\n{output}"
+        raise SystemExit(message)
 
 
 if __name__ == "__main__":
